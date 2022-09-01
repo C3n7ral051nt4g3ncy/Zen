@@ -22,10 +22,8 @@ organization = args.org
 uname = args.uname or ''
 thread_count = args.threads or 2
 
-colors = True # Output should be colored
 machine = sys.platform # Detecting the os of current system
-if machine.lower().startswith(('os', 'win', 'darwin', 'ios')):
-    colors = False # Colors shouldn't be displayed in mac & windows
+colors = not machine.lower().startswith(('os', 'win', 'darwin', 'ios'))
 if not colors:
     end = green = bad = info = ''
     start = ' ['
@@ -50,80 +48,90 @@ targetOrganization = targetRepo = targetUser = False
 jsonOutput = {}
 
 if inp.count('/') < 4:
-	if '/' in inp:
-		username = inp.split('/')[-1]
-	else:
-		username = inp
-	if organization:
-		targetOrganization = True
-	else:
-		targetUser = True
+    username = inp.split('/')[-1] if '/' in inp else inp
+    if organization:
+    	targetOrganization = True
+    else:
+    	targetUser = True
 elif inp.count('/') == 4:
 	targetRepo = inp.split('/')
 	username = targetRepo[-2]
 	repo = targetRepo[-1]
 	targetRepo = True
 else:
-	print ('%s Invalid input' % bad)
-	quit()
+    print(f'{bad} Invalid input')
+    quit()
 
 def findContributorsFromRepo(username, repo):
-	response = get('https://api.github.com/repos/%s/%s/contributors?per_page=100' % (username, repo), auth=HTTPBasicAuth(uname, '')).text
-	contributors = re.findall(r'https://github\.com/(.*?)"', response)
-	return contributors
+    response = get(
+        f'https://api.github.com/repos/{username}/{repo}/contributors?per_page=100',
+        auth=HTTPBasicAuth(uname, ''),
+    ).text
+
+    return re.findall(r'https://github\.com/(.*?)"', response)
 
 def findReposFromUsername(username):
-	response = get('https://api.github.com/users/%s/repos?per_page=100&sort=pushed' % username, auth=HTTPBasicAuth(uname, '')).text
-	repos = re.findall(r'"full_name":"%s/(.*?)",.*?"fork":(.*?),' % username, response)
-	nonForkedRepos = []
-	for repo in repos:
-		if repo[1] == 'false':
-			nonForkedRepos.append(repo[0])
-	return nonForkedRepos
+    response = get(
+        f'https://api.github.com/users/{username}/repos?per_page=100&sort=pushed',
+        auth=HTTPBasicAuth(uname, ''),
+    ).text
+
+    repos = re.findall(r'"full_name":"%s/(.*?)",.*?"fork":(.*?),' % username, response)
+    return [repo[0] for repo in repos if repo[1] == 'false']
 
 def findEmailFromContributor(username, repo, contributor):
-	response = get('https://github.com/%s/%s/commits?author=%s' % (username, repo, contributor), auth=HTTPBasicAuth(uname, '')).text
-	latestCommit = re.search(r'href="/%s/%s/commit/(.*?)"' % (username, repo), response)
-	if latestCommit:
-		latestCommit = latestCommit.group(1)
-	else:
-		latestCommit = 'dummy'
-	commitDetails = get('https://github.com/%s/%s/commit/%s.patch' % (username, repo, latestCommit), auth=HTTPBasicAuth(uname, '')).text
-	email = re.search(r'<(.*)>', commitDetails)
-	if email:
-		email = email.group(1)
-		if breach:
-			jsonOutput[contributor] = {}
-			jsonOutput[contributor]['email'] = email
-			if get('https://haveibeenpwned.com/api/v2/breachedaccount/' + email).status_code == 200:
-				email = email + start + 'pwned' + stop
-				jsonOutput[contributor]['pwned'] = True
-			else:
-				jsonOutput[contributor]['pwned'] = False
-		else:
-			jsonOutput[contributor] = email
-	return email
+    response = get(
+        f'https://github.com/{username}/{repo}/commits?author={contributor}',
+        auth=HTTPBasicAuth(uname, ''),
+    ).text
+
+    latestCommit = re.search(r'href="/%s/%s/commit/(.*?)"' % (username, repo), response)
+    latestCommit = latestCommit[1] if latestCommit else 'dummy'
+    commitDetails = get(
+        f'https://github.com/{username}/{repo}/commit/{latestCommit}.patch',
+        auth=HTTPBasicAuth(uname, ''),
+    ).text
+
+    email = re.search(r'<(.*)>', commitDetails)
+    if email:
+        email = email[1]
+        if breach:
+            jsonOutput[contributor] = {'email': email}
+            if (
+                get(
+                    f'https://haveibeenpwned.com/api/v2/breachedaccount/{email}'
+                ).status_code
+                == 200
+            ):
+                email = email + start + 'pwned' + stop
+                jsonOutput[contributor]['pwned'] = True
+            else:
+                jsonOutput[contributor]['pwned'] = False
+        else:
+            jsonOutput[contributor] = email
+    return email
 
 def findEmailFromUsername(username):
-	repos = findReposFromUsername(username)
-	for repo in repos:
-		email = findEmailFromContributor(username, repo, username)
-		if email:
-			print (username + ' : ' + email)
-			break
+    repos = findReposFromUsername(username)
+    for repo in repos:
+        if email := findEmailFromContributor(username, repo, username):
+            print(f'{username} : {email}')
+            break
 
 def findEmailsFromRepo(username, repo):
-	contributors = findContributorsFromRepo(username, repo)
-	print ('%s Total contributors: %s%i%s' % (info, green, len(contributors), end))
-	for contributor in contributors:
-		email = (findEmailFromContributor(username, repo, contributor))
-		if email:
-			print (contributor + ' : ' + email)
+    contributors = findContributorsFromRepo(username, repo)
+    print ('%s Total contributors: %s%i%s' % (info, green, len(contributors), end))
+    for contributor in contributors:
+        if email := (findEmailFromContributor(username, repo, contributor)):
+            print(f'{contributor} : {email}')
 
 def findUsersFromOrganization(username):
-	response = get('https://api.github.com/orgs/%s/members?per_page=100' % username, auth=HTTPBasicAuth(uname, '')).text
-	members = re.findall(r'"login":"(.*?)"', response)
-	return members
+    response = get(
+        f'https://api.github.com/orgs/{username}/members?per_page=100',
+        auth=HTTPBasicAuth(uname, ''),
+    ).text
+
+    return re.findall(r'"login":"(.*?)"', response)
 
 def threader(function, arg):
     threads = []
@@ -150,7 +158,6 @@ elif targetUser:
 elif targetRepo:
 	findEmailsFromRepo(username, repo)
 if output:
-	json_string = json.dumps(jsonOutput, indent=4)
-	savefile = open(output, 'w+')
-	savefile.write(json_string)
-	savefile.close()
+    json_string = json.dumps(jsonOutput, indent=4)
+    with open(output, 'w+') as savefile:
+        savefile.write(json_string)
